@@ -1,0 +1,235 @@
+/*
+ * command_console.cc
+ *
+ *  Created on: Dec 4, 2016
+ *      Author: nasa
+ */
+
+
+#include <cstdlib>
+#include <cstdio>
+#include <sstream>
+#include <iterator>
+
+#include "command_console.h"
+
+using namespace ortosdata;
+
+CommandConsole::CommandConsole()
+{
+	xcom_ = ortos::xcom::XCOMInterface::GetInstance();
+}
+
+CommandConsole::~CommandConsole()
+{
+	// TODO Auto-generated destructor stub
+}
+
+void CommandConsole::PrintCommandList()
+{
+	std::string jCmdStr = "< arm j1 ... jn > ";
+	std::string cartCmdStr = "< arm r p y x y z >";
+	std::string ctrlModeStr = "< arm ['vel'|'torque'] >";
+	std::string holdModeStr = "< arm [0(disable)|1(enable)] >";
+	std::string armIndStr = "< arm >";
+	std::string notImplStr = "*not implemented yet*";
+
+	cout << tc::bluL << endl;
+	cout << "Command List:" << " arm=['left'|'right']" << endl;
+	cout << tc::blu << "------------------------------" << tc::bluL << endl;
+	cout << CommandNames.at(CommandType::jointPos) 		<< "\t" << jCmdStr << endl;
+	cout << CommandNames.at(CommandType::jointVel) 		<< "\t" << jCmdStr << endl;
+	cout << CommandNames.at(CommandType::cartPos) 		<< "\t\t" << cartCmdStr << endl;
+	//cout << CommandNames.at(CommandType::cartRelPosition) << notImpl << endl;
+	cout << CommandNames.at(CommandType::cartRelToolPos) << "\t" << cartCmdStr << endl;
+	cout << CommandNames.at(CommandType::cartVel) 		<< "\t\t" << cartCmdStr << endl;
+	cout << CommandNames.at(CommandType::cartVelInput) << "\t" << armIndStr << endl;
+	//cout << CommandNames.at(CommandType::loadTrajectory) << notImpl << endl;
+	//cout << CommandNames.at(CommandType::cartesianTraj) << notImpl << endl;
+	//cout << CommandNames.at(CommandType::cartesianBimanTraj) << notImpl << endl;
+	cout << CommandNames.at(CommandType::setCtrlMode) 	<< "\t" << ctrlModeStr << endl;
+	cout << CommandNames.at(CommandType::stopArm) 		<< "\t\t" << armIndStr << endl;
+	cout << CommandNames.at(CommandType::openGrip) 		<< "\t" << armIndStr << endl;
+	cout << CommandNames.at(CommandType::closeGrip)		<< "\t" << armIndStr << endl;
+	cout << CommandNames.at(CommandType::reloadPar)		<< "\t" << armIndStr << endl;
+	cout << CommandNames.at(CommandType::holdMode) 		<< "\t" << holdModeStr << endl;
+	cout << tc::none << endl;
+}
+
+CommandConsole::ParsRet CommandConsole::ParseInput(const std::string input, CommandType &cmd, int &arm,
+		std::vector<double> &values, CTRL::CtrlMode &ctrlMode)
+{
+	bool keyFound;
+	std::string armStr, cmdString, valuesString;
+	values.clear();
+
+	/**
+	 * Here we find the first space which identifies the end of command string and split the string
+	 */
+	std::string::size_type t1 = input.find_first_of(" ");
+	cmdString = input.substr(0, t1);
+	std::map<CommandType, std::string>::const_iterator it;
+	int key = -1;
+
+	if (!FUTILS::FindMapKeyByValue(CommandNames, cmdString, cmd))
+		return ParsRet::CmdNotRecognized;
+
+	/**
+	 * Here we find the second space which identifies the end of arm string and split the string
+	 */
+	valuesString = input.substr(t1 + 1, input.size());
+	std::string::size_type t2 = valuesString.find_first_of(" ");
+	armStr = valuesString.substr(0, t2);
+
+	if (!(armStr == "left") && !(armStr == "right")) {
+		return ParsRet::InvalidArm;
+	}
+	arm = armStr2Int.at(armStr);
+
+	std::stringstream valss;
+	std::string ctrlModeString;
+
+	switch (cmd) {
+	case CommandType::jointPos:
+	case CommandType::jointVel:
+	case CommandType::cartPos:
+		//case CommandType::cartRelPos:
+	case CommandType::cartRelToolPos:
+	case CommandType::cartVel:
+		/**
+		 * Here we use the rest of the string its read values
+		 */
+		valuesString = valuesString.substr(t2 + 1, valuesString.size());
+		valss.str(valuesString);
+
+		std::copy(std::istream_iterator<double>(valss), std::istream_iterator<double>(), std::back_inserter(values));
+		if (!ValuesAreValid(cmd, values)) {
+			return ParsRet::InvalidInputVals;
+		}
+
+		break;
+
+//case CommandType::loadTrajectory:
+//	break;
+//case CommandType::cartesianTraj:
+//	break;
+//case CommandType::cartesianBimanTraj:
+//	break;
+	case CommandType::stopArm:
+		break;
+	case CommandType::setCtrlMode:
+		/**
+		 * Here we use the rest of the control mode value
+		 */
+		ctrlModeString = valuesString.substr(t2 + 1, valuesString.size());
+		if (ctrlModeString == "vel") {
+			ctrlMode = CTRL::CtrlMode::Velocity;
+		} else if (ctrlModeString == "torque") {
+			ctrlMode = CTRL::CtrlMode::Torque;
+		} else {
+			return ParsRet::InvalidCtrlMode;
+		}
+		break;
+	case CommandType::holdMode:
+		valuesString = valuesString.substr(t2 + 1, valuesString.size());
+		valss.str(valuesString);
+
+		std::copy(std::istream_iterator<double>(valss), std::istream_iterator<double>(), std::back_inserter(values));
+		if (values.size() != 1 || ( values.at(0) != 0 && values.at(0) != 1) ) {
+			return ParsRet::InvalidInputVals;
+		}
+		break;
+	default:
+		break;
+	}
+	return ParsRet::Ok;
+}
+
+bool CommandConsole::ValuesAreValid(const CommandType &cmd, const std::vector<double> &values)
+{
+	int valSize = values.size();
+	switch (cmd) {
+	case CommandType::jointPos:
+	case CommandType::jointVel:
+		/**
+		 * Size of values must match the number of robot joints
+		 */
+		if (values.size() != numJoints)
+			return false;
+		break;
+	case CommandType::cartPos:
+	case CommandType::cartRelPos:
+	case CommandType::cartRelToolPos:
+	case CommandType::cartVel:
+		/**
+		 * Size of values must match 6 parameters representation [rpyxyz]
+		 */
+		if (values.size() != 6)
+			return false;
+		break;
+	default:
+		break;
+	}
+
+	return true;
+}
+
+void CommandConsole::SendCommand(const CommandType cmd, const int arm,
+		const std::vector<double> &cmdValues, const CTRL::CtrlMode ctrlMode){
+
+	double jointValsArr[numJoints], cartValsArray[6];
+
+	switch (cmd) {
+
+			case CommandType::jointPos:
+				std::copy(cmdValues.begin(), cmdValues.end(), jointValsArr);
+				ctrlInterface_.SetJointsPosition(jointValsArr, arm);
+				break;
+			case CommandType::jointVel:
+				std::copy(cmdValues.begin(), cmdValues.end(), jointValsArr);
+				ctrlInterface_.SetJointVelocity(jointValsArr, arm);
+				break;
+			case CommandType::cartPos:
+				std::copy(cmdValues.begin(), cmdValues.end(), cartValsArray);
+				ctrlInterface_.SetCartesianPosition(cartValsArray, arm);
+				break;
+				//case CommandType::cartRelPos:
+				//	break;
+			case CommandType::cartRelToolPos:
+				std::copy(cmdValues.begin(), cmdValues.end(), cartValsArray);
+				ctrlInterface_.SetCartRel2ToolPosition(cartValsArray, arm);
+				break;
+			case CommandType::cartVel:
+				std::copy(cmdValues.begin(), cmdValues.end(), cartValsArray);
+				ctrlInterface_.SetCartesianVelocity(cartValsArray, arm);
+				break;
+			case CommandType::cartVelInput:
+				ctrlInterface_.SetCartesianVelocityTeleop(arm);
+				break;
+				/*case CommandType::loadTraj:
+				 break;
+				 case CommandType::cartesianTraj:
+				 break;
+				 case CommandType::cartesianBimanTraj:
+				 break;*/
+			case CommandType::stopArm:
+				ctrlInterface_.StopArm(arm);
+				break;
+			case CommandType::setCtrlMode:
+				ctrlInterface_.SetControlMode(ctrlMode, arm);
+				break;
+			case CommandType::openGrip:
+				ctrlInterface_.OpenGripper(arm);
+				break;
+			case CommandType::closeGrip:
+				ctrlInterface_.CloseGripper(arm);
+				break;
+			case CommandType::reloadPar:
+				ctrlInterface_.ReloadParameters(arm);
+				break;
+			case CommandType::holdMode:
+				ctrlInterface_.SetHoldingMode(static_cast<bool>(cmdValues.at(0)), arm);
+				break;
+			}
+}
+

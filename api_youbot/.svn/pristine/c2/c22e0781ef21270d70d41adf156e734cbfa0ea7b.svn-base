@@ -1,0 +1,225 @@
+/*
+
+ * hri_control_Class.cpp
+ *
+ *  Created on: Jun 20, 2016
+ *      Author: Kourosh Darvish
+ */
+
+#include "hri_control_Class.hpp"
+
+hri_control_Class::hri_control_Class(){
+	int a=0;
+	//arm left::0    arm right::1
+	cout<<">>>>>>>>>>>>>>>>>>>>>>>>>HRI_CONTROL_BAXTER:   "<<a<<endl;
+	cmnd_recived_flag=true;
+	hri_control_msg			="0";
+
+	sub_hri_control_cmnd	= nh.subscribe("hri_control_command", 1, &hri_control_Class::Callback_hri_control, this);
+	pub_hri_control_ack	=nh.advertise<std_msgs::String>("hri_control_ack",1);
+	pub_ArmLeftwTt	=nh.advertise<geometry_msgs::Accel>("wTt_leftArm",1);
+	pub_ArmRightwTt=nh.advertise<geometry_msgs::Accel>("wTt_rightArm",1);
+
+
+	jointValsArr=new double *[No_Arms];
+	cartValsArray=new double *[No_Arms];
+	for (int i=0;i<No_Arms;i++){	jointValsArr[i]=new double [num_joints];}
+	for (int i=0;i<No_Arms;i++){	cartValsArray[i]=new double [6];}
+
+	for (int i=0;i<No_Arms;i++){
+		hri_control_cmnd_flag[i]=true;
+		hri_control_ack_flag[i]=true;
+		flag[i]=0;
+		timeCounter[i]=0;
+		for (int j=0;j<num_joints;j++)
+			jointValsArr[i][j]=0.0;
+		for (int j=0;j<6;j++)
+			cartValsArray[i][j]=0.0;
+	}
+}
+
+void hri_control_Class::Callback_hri_control(const std_msgs::String::ConstPtr& msg1) {
+
+	cmnd_recived_flag=false;
+	hri_control_msg=msg1-> data.c_str();
+}
+
+void hri_control_Class::publish_hri_control_cmnd(int arm_index){
+
+	cout<<">>>>>>>>>>>>>>>>>>>>>>>>  hri_control_publish_cmnd!" <<endl;
+
+			std_msgs::String msg_hri_control_ack;
+			if (arm_index==0)
+			msg_hri_control_ack.data="hri_control_command_recieved_left";
+			else if (arm_index==1)
+			msg_hri_control_ack.data="hri_control_command_recieved_right";
+			else if (arm_index==100)
+			msg_hri_control_ack.data="hri_control_command_Initialization";
+
+			if (arm_index<No_Arms)
+			{
+				hri_control_cmnd_flag[arm_index]=true;
+				hri_control_ack_flag[arm_index]=false;
+			}
+			ROS_INFO("I publish hri_control command: %s",msg_hri_control_ack.data.c_str());
+			pub_hri_control_ack.publish(msg_hri_control_ack);
+}
+
+void hri_control_Class::publish_hri_control_ack(int arm_index){
+
+	cout<<">>>>>>>>>>>>>>>>>>>>>>>>  hri_control_publish_ack!" <<endl;
+
+			std_msgs::String msg_hri_control_ack;
+			msg_hri_control_ack.data="0";
+
+			if (hri_control_cmnd_flag[arm_index]==true)
+			{
+				if (arm_index==0)
+				msg_hri_control_ack.data="GoalReachedLeft";
+				if (arm_index==1)
+				msg_hri_control_ack.data="GoalReachedRight";
+
+				hri_control_ack_flag[arm_index]=true;
+			}
+			ROS_INFO("I publish hri_control ack: %s",msg_hri_control_ack.data.c_str());
+			pub_hri_control_ack.publish(msg_hri_control_ack);
+
+}
+
+void hri_control_Class::publish_robotArm_wTt(void){
+	odh.ReadArm_wTt(l_wTt_v6Ctr, "/left");
+	odh.ReadArm_wTt(r_wTt_v6Ctr, "/right");
+
+	geometry_msgs::Accel leftArm, rightArm;
+
+	leftArm.angular.x=l_wTt_v6Ctr.d.data[0];	leftArm.angular.y=l_wTt_v6Ctr.d.data[1];	leftArm.angular.z=l_wTt_v6Ctr.d.data[2];
+	leftArm.linear.x=l_wTt_v6Ctr.d.data[3];		leftArm.linear.y=l_wTt_v6Ctr.d.data[4];		leftArm.linear.z=l_wTt_v6Ctr.d.data[5];
+	pub_ArmLeftwTt.publish(leftArm);
+
+	rightArm.angular.x=r_wTt_v6Ctr.d.data[0];	rightArm.angular.y=r_wTt_v6Ctr.d.data[1];	rightArm.angular.z=r_wTt_v6Ctr.d.data[2];
+	rightArm.linear.x=r_wTt_v6Ctr.d.data[3];	rightArm.linear.y=r_wTt_v6Ctr.d.data[4];	rightArm.linear.z=r_wTt_v6Ctr.d.data[5];
+	pub_ArmRightwTt.publish(rightArm);
+
+}
+
+void hri_control_Class::cmdValues_hri_control( const ortosdata::CommandType cmd,const int arm, const std::vector<double> &cmdValues){
+
+	if (cmd==ortosdata::CommandType::jointPos){
+		if (arm==0)			std::copy(cmdValues.begin(), cmdValues.end(), jointValsArr[0]);
+		if (arm==1)			std::copy(cmdValues.begin(), cmdValues.end(), jointValsArr[1]);
+	}
+	if (cmd==ortosdata::CommandType::cartPos){
+		if (arm==0)			std::copy(cmdValues.begin(), cmdValues.end(), cartValsArray[0]);
+		if (arm==1)			std::copy(cmdValues.begin(), cmdValues.end(), cartValsArray[1]);
+	}
+}
+
+bool hri_control_Class::goal_error_hri_control(const ortosdata::CommandType cmd, const int arm){
+	bool return_value=false;
+	flag[arm] = 0;
+	double sum;
+	switch (cmd) {
+
+			case ortosdata::CommandType::jointPos:
+			{
+//				vector<double> l_q(num_joints, 0.0), l_q_dot(num_joints, 0.0);
+//				vector<double> r_q(num_joints, 0.0), r_q_dot(num_joints, 0.0);
+
+				vector<double> _q_(num_joints, 0.0), _q_dot(num_joints, 0.0);
+
+				if (arm==0)
+					odh.ReadArmFeedback(_fbk_,"/left");
+				else if (arm==1)
+					odh.ReadArmFeedback(_fbk_,"/right");
+				_q_.assign(_fbk_.d.q, _fbk_.d.q + num_joints);
+
+				flag[arm] = 1;
+				for (int i=0;i<num_joints;i++){
+						if (std::fabs(_q_.at(i)-jointValsArr[arm][i])>qErrThresh_hri )
+							flag[arm] = 0;
+				}
+				if (flag[arm] == 1)
+					++timeCounter[arm];
+				else
+					timeCounter[arm] = 0;
+
+				if (timeCounter[arm] > errThreshDuration)
+				{
+					timeCounter[arm] = 0;
+					return_value = true;
+				}
+			}
+				break;
+			case ortosdata::CommandType::cartPos:
+			{
+
+				CMAT::Vect6  l_wTg_v6(const_cast<double*>(cartValsArray[0]));
+				CMAT::Vect6  r_wTg_v6(const_cast<double*>(cartValsArray[1]));
+				l_wTg = l_wTg_v6.Vect2TmatrixEsa();
+				r_wTg = r_wTg_v6.Vect2TmatrixEsa();
+
+				odh.ReadArm_wTt(l_wTt_v6Ctr, "/left");
+				odh.ReadArm_wTt(r_wTt_v6Ctr, "/right");
+				l_wTt_v6.CopyFrom(l_wTt_v6Ctr.d.data);
+				r_wTt_v6.CopyFrom(r_wTt_v6Ctr.d.data);
+
+				l_wTt = l_wTt_v6.Vect2TmatrixEsa();
+				r_wTt = r_wTt_v6.Vect2TmatrixEsa();
+
+				L_psi_ = CMAT::CartError( l_wTg,l_wTt  );
+				R_psi_ = CMAT::CartError( r_wTg,r_wTt);
+				if ((L_psi_.GetFirstVect3().Norm(2) < angErrThresh_hri)
+						&& (L_psi_.GetSecondVect3().Norm(2) < linErrThresh_hri))
+				{
+					flag[0] = 1;
+				}
+				if ((R_psi_.GetFirstVect3().Norm(2) < angErrThresh_hri)
+								&& (R_psi_.GetSecondVect3().Norm(2) < linErrThresh_hri))
+				{
+					flag[1] = 1;
+				}
+
+				if (flag[arm] == 1)
+					++timeCounter[arm];
+				else
+					timeCounter[arm] = 0;
+
+				if (timeCounter[arm] >errThreshDuration)
+				{
+					timeCounter[arm] = 0;
+					return_value = true;
+					}
+			}
+				break;
+			case ortosdata::CommandType::stopArm:
+	//			ctrlInterface_.StopArm(arm);
+				break;
+	//		case CommandType::setCtrlMode:
+	//			ctrlInterface_.SetControlMode(ctrlMode, arm);
+	//			break;
+			case ortosdata::CommandType::openGrip:
+	//			ctrlInterface_.OpenGripper(arm);
+				break;
+			case ortosdata::CommandType::closeGrip:
+	//			ctrlInterface_.CloseGripper(arm);
+				break;
+	//		case CommandType::reloadPar:
+	//			ctrlInterface_.ReloadParameters(arm);
+	//			break;
+			case ortosdata::CommandType::holdMode:
+	//			ctrlInterface_.SetHoldingMode(static_cast<bool>(cmdValues.at(0)), arm);
+				break;
+			}
+
+return return_value;
+}
+
+hri_control_Class::~hri_control_Class(){
+
+	for (int i=0;i<No_Arms;i++)
+		delete [] jointValsArr[i];
+	delete [] jointValsArr;
+}
+
+
+

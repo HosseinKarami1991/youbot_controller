@@ -1,0 +1,278 @@
+/*
+ * interface3.cc
+ *
+ *  Created on: Dec 2, 2016
+ *      Author: nasa
+ */
+
+
+
+//CPP
+#include <unistd.h>
+#include <cstdlib>
+#include <cstdio>
+#include <sstream>
+#include <string>
+#include <iostream>
+#include <vector>
+#include <ros/ros.h>
+#include <control_baxter/roc.h>
+#include <time.h>
+#include <boost/algorithm/string.hpp>
+//#include <boost/algorithm/string/erase.hpp>
+
+#include <control_baxter/ortosdata_defines.h>
+//#include "command_consoleAPI.h"
+#include "controlCommnad_msgs/controlTaskParam.h"
+#include "controlCommnad_msgs/transformation.h"
+#include "controlCommnad_msgs/controlGoalReachAck.h"
+#include "controlCommnad_msgs/control.h"
+
+#include "control_baxter/roc.h"
+
+
+# include <simRobot_msgs/simulateRobotSRV.h>
+# include <simRobot_msgs/sim_robot.h>
+
+
+using namespace std;
+
+void SimulateServiceApproachSingleArm(ros::ServiceClient &simRobot_client, int armIndex,vector<double> initialJointPose, vector<double> goalPose,  bool &simulationResult, double &actionTime, vector<float> &finalJointPose );
+void SimulateServiceTransportSingleArms(ros::ServiceClient &simRobot_client, int armIndex, vector<double> initialJointPose, vector<double> wTo ,vector<double> wTg, bool &simulationResult, double &actionTime, vector<float> &finalJointPose );
+void SimulateServiceTransportJointArms(ros::ServiceClient &simRobot_client,vector<int> armIndex, vector<vector<float>> initialJointPose, vector<float> wTo ,vector<float> wTg, bool &simulationResult, double &actionTime, vector<vector<float>> &finalJointPose );
+
+int main(int argc, char **argv)
+{
+	ros::init(argc, argv, "COMMANDER_SIMULATOR");
+	ros::NodeHandle nh;
+	ros::Rate loop_rate(2);
+
+	ros::ServiceClient simRobot_client=nh.serviceClient<simRobot_msgs::simulateRobotSRV>("robotSimulator_service");;
+
+
+	simRobot_msgs::simulateRobotSRV simRobot_srv;
+	simRobot_msgs::transformation simRobot_pose;
+
+	bool simulationResult;
+	double actionTime;
+	vector<float> finalJointPose;finalJointPose.resize(7);
+
+
+
+	int armIndex=1;
+
+/*	{
+//		vector<float>initialJointPose={-0.599 , -1.155 , 0.900  ,1.979 , -0.408 , 0.912 , 2.132 };
+//		vector<float> goalPose={ 3.14, 0 ,3.14 ,0.688396, -0.322613 ,0.131225 };
+//
+//		vector<float>initialJointPose={-0.2217907 ,-0.550134, 1.11505, 1.47478, -0.5931777 ,1.124408 ,0.472027};
+//		vector<float> goalPose={ 3.14 ,0 ,3.14 ,0.6085621, -0.01519962 ,0.0312986};
+//
+//		SimulateServiceApproachSingleArm(simRobot_client, armIndex, initialJointPose, goalPose, simulationResult, actionTime, finalJointPose );
+	}*/
+//	{
+//		vector<float>initialJointPose={-0.036,  -0.678 , 1.227 , 1.469 , -0.828 , 1.370  ,0.547 };
+//		vector<float> goalPose={ 3.14, 0, 3.14, 0.685621, -0.319962, 0.0312986 };
+//
+//		SimulateServiceApproachSingleArm(simRobot_client, armIndex, initialJointPose, goalPose, simulationResult, actionTime, finalJointPose );
+//	}
+
+/*
+	{
+		vector<double>initialJointPose={0.0217907, -0.550134, 1.11505, 1.47478, -0.931777, 1.24408, 0.472027 };
+		vector<double>wTo={3.14 ,0, 3.14 ,0.706734 ,-0.32593, -0.120074};
+		vector<double> wTg={ 3.14 ,0, 3.14, 0.350105 ,-0.0333716 ,0.0290979};
+		SimulateServiceTransportSingleArms(simRobot_client, armIndex, initialJointPose, wTo, wTg, simulationResult, actionTime, finalJointPose );
+//
+	}
+*/
+
+//	{
+////		vector<float>initialJointPose={-0.239 , -0.737 , 1.813 , 2.089 , -0.800 , 1.381 , 1.078};
+////		vector<float>wTo={3.14, 0 ,3.14 ,0.450115 ,-0.169403 ,0.0265193};
+////		vector<float> wTg={3.14 ,0 ,3.14, 0.451369, -0.165418 ,-0.0633837};
+//
+//		vector<float>initialJointPose={-0.2217907, -0.550134 ,1.11505, 1.47478, -0.5931777 ,1.124408 ,0.472027};
+//		vector<float>wTo={3.14, 0 ,3.14 ,0.706734 ,-0.32593 ,-0.120074};
+//		vector<float> wTg={3.14, 0 ,3.14, 0.350105 ,-0.0333716 , 0.0290979};
+//
+//
+//		SimulateServiceTransportSingleArms(simRobot_client, armIndex, initialJointPose, wTo, wTg, simulationResult, actionTime, finalJointPose );
+//	}
+
+	{
+		vector<float>q0_Left ={  0.385192, 0.470217, -1.18966, 1.15992, 0.23141, 1.40063, -1.08449 };
+		vector<float>q0_Right={ -0.286, 0.394444, 1.12431, 0.998329, -0.106145, 1.54798, 1.02601 };
+
+		vector<vector<float>> initialJointPose;
+		initialJointPose.push_back(q0_Left);
+		initialJointPose.push_back(q0_Right);
+
+		vector<int> armIndex={0,1};
+
+		vector<vector<float>> finalJointPose;
+		vector<float>wTo={0, -1.54751, 1.59537, 0.591093, -0.0114058 ,0.0434442};
+		vector<float> wTg={ 0 ,-1.53 ,1.5 ,0.55, 0 ,0.2};
+//		SimulateServiceTransportSingleArms(simRobot_client, armIndex, initialJointPose, wTo, wTg, simulationResult, actionTime, finalJointPose );
+
+		SimulateServiceTransportJointArms(simRobot_client, armIndex, initialJointPose, wTo , wTg, simulationResult,actionTime, finalJointPose );
+
+	}
+
+
+	return 1;
+};
+
+
+void SimulateServiceApproachSingleArm(ros::ServiceClient &simRobot_client,int armIndex,vector<double> initialJointPose, vector<double> goalPose,  bool &simulationResult, double &actionTime, vector<float> &finalJointPose ){
+	cout<<(("robotCallback::SimulateRobotSingleArm"))<<endl;
+
+	simRobot_msgs::simulateRobotSRV simRobot_srv;
+	simRobot_msgs::transformation simRobot_pose;
+
+//	cout<<"2001"<<endl;
+	simRobot_srv.request.simRobot.Activation=1;
+	simRobot_srv.request.simRobot.sim_single_arm.armIndex=armIndex;
+	simRobot_srv.request.simRobot.sim_single_arm.NoGoals=1;
+
+	for (int j=0;j<goalPose.size();j++)
+	{
+		simRobot_pose.cartesianPosition[j]=goalPose[j];
+	}
+//	cout<<"2002"<<endl;
+
+	simRobot_srv.request.simRobot.sim_single_arm.cartGoal.push_back(simRobot_pose);
+	for (int i=0;i<7;i++)
+		simRobot_srv.request.simRobot.sim_single_arm.jointsInit.jointPosition[i]=initialJointPose[i];
+//	cout<<"2003"<<endl;
+	if (simRobot_client.call(simRobot_srv))
+	{
+//		cout<<"2004"<<endl;
+		simulationResult=(bool)simRobot_srv.response.simResponse;
+		// add the action Time here,
+		// add the final joint Pose here
+//		cout<<"2005"<<endl;
+		if (armIndex==0)
+			for(int i=0;i<7;i++)
+				finalJointPose[i]=simRobot_srv.response.jointsfinal_arm1[i];
+		else if(armIndex==1)
+			for(int i=0;i<7;i++)
+				finalJointPose[i]=simRobot_srv.response.jointsfinal_arm2[i];
+		else
+			cout<<"Error in arm Index"<<endl;
+
+//		cout<<"2006"<<endl;
+
+		actionTime=(double)simRobot_srv.response.time;
+
+		if (simulationResult)
+			cout<<("**** Simulation Shoes Robot Can Follow the Given Path ****")<<endl;
+		else
+			cout<<("**** Simulation Shoes Robot Can NOT Follow the Given Path ****")<<endl;
+	}
+
+//	return simulationResult;
+};
+
+
+
+void SimulateServiceTransportSingleArms(ros::ServiceClient &simRobot_client, int armIndex, vector<double> initialJointPose, vector<double> wTo ,vector<double> wTg, bool &simulationResult, double &actionTime, vector<float> &finalJointPose ){
+	cout<<(("robotCallback::SimulateServiceTransportSingleArms"))<<endl;
+
+	//	bool simulationResult;
+		simRobot_msgs::simulateRobotSRV simRobot_srv;
+		simRobot_msgs::transformation simRobot_pose;
+
+		if(armIndex>1)
+			cout<<"the arm indices is not correct"<<endl;
+
+		simRobot_srv.request.simRobot.Activation=3;
+		simRobot_srv.request.simRobot.sim_single_arm_transport.arm_Index=armIndex;
+		simRobot_srv.request.simRobot.sim_single_arm_transport.NoGoals=1;
+
+
+		for (int j=0;j<7;j++)
+			simRobot_srv.request.simRobot.sim_single_arm_transport.jointsInit_arm.jointPosition[j]=initialJointPose[j];
+
+		for (int j=0;j<wTg.size();j++)
+			simRobot_pose.cartesianPosition[j]=wTg[j];
+
+		simRobot_srv.request.simRobot.sim_single_arm_transport.wTg.push_back(simRobot_pose);
+
+		for (int j=0;j<wTo.size();j++)
+			simRobot_srv.request.simRobot.sim_single_arm_transport.wTo.cartesianPosition[j]=wTo[j];
+
+
+		if (simRobot_client.call(simRobot_srv))
+		{
+			simulationResult=simRobot_srv.response.simResponse;
+			actionTime=simRobot_srv.response.time;
+			if (armIndex==0)
+				for(int i=0;i<7;i++)
+					finalJointPose[i]=simRobot_srv.response.jointsfinal_arm1[i];
+			else if(armIndex==1)
+				for(int i=0;i<7;i++)
+					finalJointPose[i]=simRobot_srv.response.jointsfinal_arm2[i];
+			else
+				cout<<"Error in arm Index"<<endl;
+
+			if (simulationResult)
+				cout<<("**** Simulation Shoes Robot Can Follow the Given Path ****")<<endl;
+			else
+				cout<<("**** Simulation Shoes Robot Can NOT Follow the Given Path ****")<<endl;
+
+		}
+
+};
+
+void SimulateServiceTransportJointArms(ros::ServiceClient &simRobot_client,vector<int> armIndex, vector<vector<float>> initialJointPose, vector<float> wTo ,vector<float> wTg, bool &simulationResult, double &actionTime, vector<vector<float>> &finalJointPose ){
+	cout<<(("robotCallback::SimulateServiceTransportJointArms"))<<endl;
+
+//	bool simulationResult;
+	simRobot_msgs::simulateRobotSRV simRobot_srv;
+	simRobot_msgs::transformation simRobot_pose;
+
+	if(armIndex.size()!=2)
+		cout<<"the arm indices is not correct"<<endl;
+
+	simRobot_srv.request.simRobot.Activation=2;
+	simRobot_srv.request.simRobot.sim_biman_arm.arm1_Index=armIndex[0];
+	simRobot_srv.request.simRobot.sim_biman_arm.arm2_Index=armIndex[1];
+	simRobot_srv.request.simRobot.sim_biman_arm.NoGoals=1;
+
+
+	for (int j=0;j<7;j++)
+		simRobot_srv.request.simRobot.sim_biman_arm.jointsInit_arm1.jointPosition[j]=initialJointPose[armIndex[0]][j];
+	for (int j=0;j<7;j++)
+		simRobot_srv.request.simRobot.sim_biman_arm.jointsInit_arm2.jointPosition[j]=initialJointPose[armIndex[1]][j];
+
+
+	for (int j=0;j<wTg.size();j++)
+		simRobot_pose.cartesianPosition[j]=wTg[j];
+
+	simRobot_srv.request.simRobot.sim_biman_arm.wTg.push_back(simRobot_pose);
+
+	for (int j=0;j<wTo.size();j++)
+		simRobot_srv.request.simRobot.sim_biman_arm.wTo.cartesianPosition[j]=wTo[j];
+
+
+	if (simRobot_client.call(simRobot_srv))
+	{
+		simulationResult=simRobot_srv.response.simResponse;
+		actionTime=simRobot_srv.response.time;
+		vector<float> leftArmJoints,rightArmJoints;
+		for(int i=0;i<7;i++)
+		{
+			leftArmJoints.push_back(simRobot_srv.response.jointsfinal_arm1[i]);
+			rightArmJoints.push_back(simRobot_srv.response.jointsfinal_arm2[i]);
+		}
+		finalJointPose.push_back(leftArmJoints);
+		finalJointPose.push_back(rightArmJoints);
+
+		if (simulationResult)
+			cout<<("**** Simulation Shoes Robot Can Follow the Given Path ****")<<endl;
+		else
+			cout<<("**** Simulation Shoes Robot Can NOT Follow the Given Path ****")<<endl;
+
+	}
+};

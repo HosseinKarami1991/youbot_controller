@@ -1,0 +1,91 @@
+/*
+ *
+ hri_control_Class.hpp
+ *
+ *  Created on: Jun 20, 2016
+ *      Author: Kourosh Darvish
+ */
+
+#include <iostream>
+#include <string>
+#include <stdio.h>
+#include <iterator>
+#include <sstream>
+
+#include <ros/ros.h>
+#include <std_msgs/Char.h>
+#include <std_msgs/String.h>
+#include <geometry_msgs/Accel.h>
+
+#include <baxter_core_msgs/EndEffectorState.h>
+#include <baxter_core_msgs/EndEffectorCommand.h>
+#include "sensor_msgs/JointState.h"
+#include "controlCommnad_msgs/control.h"
+
+
+#include <vector>
+#include <cmath>
+#include <control_baxter/roc.h>
+
+#include <cassert>
+#include <numeric>
+#include <limits>
+#include <cmat/cmat.h>
+#include <ortos/ortos.h>
+
+#include <mutex>
+
+
+//# define M_PI		3.14159265358979323846	/* pi */
+
+using namespace std;
+
+class hri_control_Class {
+	public:
+
+		int counter1=0;
+	 	int No_Arms=2;
+	 	const int num_joints=7;
+
+	 	bool hri_control_cmnd_flag[2];// check if necessary or not?
+		bool hri_control_ack_flag[2];
+		bool cmnd_recived_flag;
+		controlCommnad_msgs::control hri_control_msg;
+
+	//	 errorThresh_hri=0.01;
+
+		 double qErrThresh_hri=0.001*10, angErrThresh_hri=4 * M_PI / 180.0, linErrThresh_hri=0.01*2;
+		 int errThreshDuration=5;
+
+		hri_control_Class();
+		void Callback_hri_control(const controlCommnad_msgs::control& msg1);
+		void publish_hri_control_cmnd(int);
+		void publish_hri_control_ack(int);
+		void publish_robotArm_wTt(void);
+		bool goal_error_hri_control( const ortosdata::CommandType cmd,const int arm);
+		void cmdValues_hri_control( const ortosdata::CommandType cmd,const int arm, const std::vector<double> &cmdValues);
+		~hri_control_Class();
+
+	private:
+		ros::NodeHandle nh;
+		ros::Subscriber sub_hri_control_cmnd;
+		ros::Subscriber sub_JntSt;
+		ros::Publisher pub_hri_control_ack;
+		ros::Publisher pub_ArmLeftwTt;
+		ros::Publisher pub_ArmRightwTt;
+
+		CMAT::TransfMatrix l_wTt, r_wTt, l_wTg, r_wTg;
+		ortosdata::DataHelper odh;
+		ortosdata::Vector6Container l_wTt_v6Ctr, r_wTt_v6Ctr;
+		CMAT::Vect6 l_wTt_v6, r_wTt_v6;
+		CMAT::Vect6 L_psi_, R_psi_;
+		bool flag[2];
+		int timeCounter[2];
+		CMAT::Matrix q_, q_bar_;
+		ortosdata::FeedbackContainer l_fbk, r_fbk, _fbk_;
+		double  **cartValsArray;
+		double **jointValsArr;
+};
+
+
+

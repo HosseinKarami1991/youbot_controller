@@ -1,0 +1,484 @@
+/*
+ * interface3.cc
+ *
+ *  Created on: Dec 2, 2016
+ *      Author: nasa
+ */
+
+
+
+//CPP
+#include <unistd.h>
+#include <cstdlib>
+#include <cstdio>
+#include <sstream>
+#include <iostream>
+#include <vector>
+#include <ortos/ortos.h>
+#include <cmat/cmat.h>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <ros/ros.h>
+#include <control_baxter/roc.h>
+
+#include <control_baxter/ortosdata_defines.h>
+#include "command_consoleAPI.h"
+#include "hri_control_Class.hpp"
+#include "controlCommnad_msgs/control.h"
+#include "control_baxter/roc.h"
+
+using std::cout;
+using std::endl;
+using std::vector;
+
+std::atomic_int atom_arm { 0 };
+std::atomic_bool atom_checkResp { false };
+std::mutex _lock;
+
+using namespace ortosdata;
+
+struct BothArmsReached
+{
+    bool l_GR, r_GR;
+    CTRL::ControllerInterface* ci_ptr;
+
+    BothArmsReached(CTRL::ControllerInterface* ciPtr) :
+            l_GR(false), r_GR(false), ci_ptr(ciPtr)
+    {
+    }
+
+    bool Reached()
+    {
+        if (ci_ptr->IsGoalReached((int) ArmNames::Left))
+            l_GR = true;
+        if (ci_ptr->IsGoalReached((int) ArmNames::Right))
+            r_GR = true;
+        if (l_GR && r_GR)
+        {
+            l_GR = r_GR = false;
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+};
+
+void goal_reached_thread()
+{
+	int ret;
+	ortos::Task* task = ortos::Task::GetInstance();
+	task->SetSampleTime(10 * ortos::constants::oneMillisecond);
+
+	ret = task->CreateSync("Goal_Reached_thread");
+
+	ortos::DebugConsole::Write(ortos::LogLevel::info, "thread", "Task created");
+	if (ret != ORTOS_RV_OK) {
+		ortos::DebugConsole::Write(ortos::LogLevel::error, "thread", "Error creating the task");
+		task->Exit();
+	}
+	ortos::xcom::XCOMInterface* xcom = ortos::xcom::XCOMInterface::GetInstance();
+	CTRL::ControllerInterface ctrlInterface;
+
+	while (task->Continue()) {
+		if (atom_checkResp) {
+			if (ctrlInterface.IsGoalReached(atom_arm)) {
+				atom_checkResp = false;
+				_lock.lock();
+				std::cout << tc::yel << "Arm [" << ortosdata::arm2String.at(atom_arm) << "] Goal Reached!" << tc::none << std::endl;
+				_lock.unlock();
+			}
+		}
+		task->WaitPeriod();
+	}
+}
+
+/**
+ * Node main function
+ */
+int main(int argc, char **argv)
+{
+	ros::init(argc, argv, "API_HRI_CONTROL");
+	ros::NodeHandle nh;
+
+	int ret;
+	ortos::Task* task = ortos::Task::GetInstance();
+	task->SetSampleTime(CTRL::RateDefines::TaskPeriodMillis * ortos::constants::oneMillisecond);
+	ret = task->CreateSync("API_CONTROL_LOWER_PLANNER");
+//	ortos::DebugConsole::Write(ortos::LogLevel::info, "main", "Task created");
+	if (ret != ORTOS_RV_OK) {
+		ortos::DebugConsole::Write(ortos::LogLevel::error, "main", "Error creating the task");
+		task->Exit();
+	}
+	ortos::xcom::XCOMInterface* xcom = ortos::xcom::XCOMInterface::GetInstance();
+	CTRL::ControllerInterface ctrlInterface_;
+	ortosdata::DataHelper odh;
+    BothArmsReached bar(&ctrlInterface_);
+
+	hri_control_Class obj_hri_control;// initializing control_hri class
+
+	ortosdata::Vector6Container l_wTt_v6Ctr, r_wTt_v6Ctr;
+	CMAT::Vect6 l_wTt_v6, r_wTt_v6;
+	//CMAT::Vect6 l_wTg_v6, r_wTg_v6;
+	//CMAT::Vect6 v6goal;
+
+	CMAT::Vect6 L_psi_, R_psi_;
+	CMAT::TransfMatrix l_wTt, r_wTt, l_wTg, r_wTg;
+
+	bool taskCompleted = false, running = false;
+	unsigned int iter = 0;
+	int arm;
+
+	ortosdata::BoolContainer l_cmd, r_cmd;
+	l_cmd.d = false;
+	r_cmd.d = false;
+
+	/* hri commands
+	ret = xcom->Subscribe(ortosdata::topicnames::goalReachedHRI+ "/left", l_cmd);
+	if (ret != ORTOS_RV_OK) {
+		ortos::DebugConsole::Write(ortos::LogLevel::error, "main", "Error while subscribing to the goalReachedHRI Left Arm");
+	}
+	ret = xcom->Subscribe(ortosdata::topicnames::goalReachedHRI+ "/right", r_cmd);
+		if (ret != ORTOS_RV_OK) {
+			ortos::DebugConsole::Write(ortos::LogLevel::error, "main", "Error while subscribing to the goalReachedHRI Right Arm");
+		}
+*/
+	int BiArm1,BiArm2;
+	bool holdingmodeCmnd;
+	bool error_check=0;
+	const int No_Gripper=2;
+	const int Arm_state=3; //left,right, bimanual
+	bool GripperFlag[No_Gripper];
+	bool HoldModeFlag[No_Gripper];
+	bool stopArmFlag[No_Gripper];
+
+	long double sysTime[No_Gripper];
+	long double sysTimeMS[No_Gripper];
+	long double sysTimeGripper[No_Gripper];
+	long double sysTimeMSGripper[No_Gripper] ;
+	int ack_counter[Arm_state];
+	unsigned long int counter1=0;
+	//unsigned int iter = 0;
+	//int arm;
+
+	for (int mm=0;mm<No_Gripper;mm++)
+	{	GripperFlag[mm]=true;
+		HoldModeFlag[mm]=true;
+		stopArmFlag[mm]=true;
+		sysTime[mm]=0;sysTimeMS[mm]=0; sysTimeGripper[mm]=0;sysTimeMSGripper[mm]=0 ;
+	}
+	for (int mm=0;mm<Arm_state;mm++)
+		ack_counter[mm]=0;
+
+controlCommnad_msgs::control input;
+	string cmdRecvd;
+	std::vector<double> cmdValues;
+	double jointValsArr[ortosdata::numJoints], cartValsArray[6],tTo11[6],tTo12[6],wTg[6];
+	CTRL::CtrlMode ctrlMode;
+
+	CommandConsole::ParsRet parsRetVal;
+	CommandConsole console;
+	std::thread grt(goal_reached_thread);
+
+	/// Facility sleep, just to get the console output printed after all the ortostask-related prints
+//	std::this_thread::sleep_for(std::chrono::seconds(1));
+
+//	console.PrintCommandList();
+
+	 double qErrThresh_hri=0.001*10, angErrThresh_hri=4 * M_PI / 180.0, linErrThresh_hri=0.01*2;
+	 bool flag=0;
+
+	 ros::Rate loop_rate(100);
+
+	while (ros::ok() &&  !taskCompleted && task->Continue()) {
+		counter1++;
+//		cout<<counter1<<": "<<1<<endl;
+
+		xcom->Synchronize();
+//		cout<<counter1<<": "<<22<<endl;
+		if (obj_hri_control.cmnd_recived_flag==false)
+		{
+			obj_hri_control.cmnd_recived_flag=true;
+
+
+			input=obj_hri_control.hri_control_msg;
+
+//			parsRetVal = console.ParseInput(input, cmdRecvd, arm, cmdValues, ctrlMode);
+//			if (parsRetVal == CommandConsole::ParsRet::Ok) {
+//
+//				_lock.lock();
+//				cout << tc::grnL << "Command Read: '" << ortosdata::CommandNames.at(cmdRecvd);
+//				cout << "', arm: '" << ortosdata::armInt2Str.at(arm) << "', values: [";
+//				FUTILS::PrintSTLVector(cmdValues, ',');
+//				cout << " ]" << tc::none << endl;
+//				_lock.unlock();
+//
+//				if (cmdValues.size() != 0) {
+//					atom_checkResp = true;
+//					atom_arm = arm;
+//				}
+			if(input.Activation[0]==1){
+				cmdRecvd="cartPos";
+				arm=input.oneArm.armIndex;
+				cartValsArray[0]=input.oneArm.cartGoal.cartesianPosition[0];
+				cartValsArray[1]=input.oneArm.cartGoal.cartesianPosition[1];
+				cartValsArray[2]=input.oneArm.cartGoal.cartesianPosition[2];
+				cartValsArray[3]=input.oneArm.cartGoal.cartesianPosition[3];
+				cartValsArray[4]=input.oneArm.cartGoal.cartesianPosition[4];
+				cartValsArray[5]=input.oneArm.cartGoal.cartesianPosition[5];
+				ctrlInterface_.SetCartesianPosition(cartValsArray, arm);
+
+			}else if (input.Activation[1]==1){
+				cmdRecvd="bimanCoordPos";
+				arm=2;// bimanual
+				BiArm1=input.bimanualArm.arm1;
+				BiArm2=input.bimanualArm.arm2;
+				tTo11[0]=input.bimanualArm.tTo1.cartesianPosition[0];
+				tTo11[1]=input.bimanualArm.tTo1.cartesianPosition[1];
+				tTo11[2]=input.bimanualArm.tTo1.cartesianPosition[2];
+				tTo11[3]=input.bimanualArm.tTo1.cartesianPosition[3];
+				tTo11[4]=input.bimanualArm.tTo1.cartesianPosition[4];
+				tTo11[5]=input.bimanualArm.tTo1.cartesianPosition[5];
+
+				tTo12[0]=input.bimanualArm.tTo2.cartesianPosition[0];
+				tTo12[1]=input.bimanualArm.tTo2.cartesianPosition[1];
+				tTo12[2]=input.bimanualArm.tTo2.cartesianPosition[2];
+				tTo12[3]=input.bimanualArm.tTo2.cartesianPosition[3];
+				tTo12[4]=input.bimanualArm.tTo2.cartesianPosition[4];
+				tTo12[5]=input.bimanualArm.tTo2.cartesianPosition[5];
+
+				wTg[0]=input.bimanualArm.wTg.cartesianPosition[0];
+				wTg[1]=input.bimanualArm.wTg.cartesianPosition[1];
+				wTg[2]=input.bimanualArm.wTg.cartesianPosition[2];
+				wTg[3]=input.bimanualArm.wTg.cartesianPosition[3];
+				wTg[4]=input.bimanualArm.wTg.cartesianPosition[4];
+				wTg[5]=input.bimanualArm.wTg.cartesianPosition[5];
+
+				ctrlInterface_.StartBimanCoordPos(BiArm1,BiArm2,tTo11,tTo12,wTg);
+				cout<<"BiArm1: "<<BiArm1<<"BiArm2: "<<BiArm2<<endl;
+
+			}else if (input.Activation[2]==1){
+				cmdRecvd="closeGrip";
+				arm=input.closeGripArm.arm;
+				ctrlInterface_.CloseGripper(arm);
+				GripperFlag[arm]=false;
+				sysTimeGripper[arm]=time(0);
+				sysTimeMSGripper[arm]=sysTimeGripper[arm]*1000;
+
+			}else if (input.Activation[3]==1){
+				cmdRecvd="openGrip";
+				arm=input.openGripArm.arm;
+				ctrlInterface_.OpenGripper(arm);
+				GripperFlag[arm]=false;
+				sysTimeGripper[arm]=time(0);
+				sysTimeMSGripper[arm]=sysTimeGripper[arm]*1000;
+
+			}else if (input.Activation[4]==1){
+				cmdRecvd="stopArm";
+				arm=input.stopArm.arm;
+				ctrlInterface_.StopArm(arm);
+				stopArmFlag[arm]=false;
+				sysTimeGripper[arm]=time(0);
+				sysTimeMSGripper[arm]=sysTimeGripper[arm]*1000;
+
+			}else if (input.Activation[5]==1){
+				cmdRecvd="holdMode";
+				arm=input.holdModeArm.arm;
+				holdingmodeCmnd=input.holdModeArm.holdingmode;
+				ctrlInterface_.SetHoldingMode(holdingmodeCmnd,arm);
+				HoldModeFlag[arm]=false;
+				sysTimeGripper[arm]=time(0);
+				sysTimeMSGripper[arm]=sysTimeGripper[arm]*1000;
+
+			}else{
+				cmdRecvd="";
+				cout<<"input.Activation: "<<input.Activation[0]<<input.Activation[1]<<input.Activation[2]
+					<<	input.Activation[3]<<input.Activation[4]<<input.Activation[5]<<endl;
+			cout<<tc::red <<"No Command Received"<<tc::none<<endl;
+
+			}
+//			cout<<counter1<<": "<<2<<endl;
+
+//				console.SendCommand(cmdRecvd, arm, cmdValues, ctrlMode);
+
+//				if (arm<No_Gripper &&
+//						(cmdRecvd==ortosdata::CommandType::openGrip || cmdRecvd==ortosdata::CommandType::closeGrip))
+//				{
+//
+//				}
+//				if ( cmdRecvd==ortosdata::CommandType::holdMode)
+//				{
+//
+//				}
+//				if ( cmdRecvd==ortosdata::CommandType::stopArm){
+//					stopArmFlag[arm]=false;
+//					sysTimeGripper[arm]=time(0);
+//					sysTimeMSGripper[arm]=sysTimeGripper[arm]*1000;
+//				}
+
+				obj_hri_control.hri_control_cmnd_flag[arm]=false;
+//				cout<<"************** 1 ****** "<<endl;
+				obj_hri_control.publish_hri_control_cmnd(arm);
+				ack_counter[arm]=counter1+1;
+				if (cmdRecvd=="bimanCoordPos")
+					obj_hri_control.cmdValues_hri_control(tTo11, tTo12,wTg);
+				else
+					obj_hri_control.cmdValues_hri_control(cmdRecvd, arm,cartValsArray);// later add jointPos here
+
+		}
+//		cout<<counter1<<": "<<3<<endl;
+//		else if (input == "help") {
+//				_lock.lock();
+//				console.PrintCommandList();
+//				_lock.unlock();
+//		}
+//		else {
+//				_lock.lock();
+//				cout << tc::red << "Error Parsing: " << console.ParsRetNames.at(parsRetVal) << tc::none << endl;
+//				_lock.unlock();
+//				obj_hri_control.publish_hri_control_cmnd(100);// 100: initialization
+//		}
+//	}
+/*
+	odh.ReadArm_wTt(l_wTt_v6Ctr, "/left");
+	odh.ReadArm_wTt(r_wTt_v6Ctr, "/right");
+	l_wTt_v6.CopyFrom(l_wTt_v6Ctr.d.data);
+	r_wTt_v6.CopyFrom(r_wTt_v6Ctr.d.data);
+
+	l_wTt = l_wTt_v6.Vect2TmatrixEsa();
+	r_wTt = r_wTt_v6.Vect2TmatrixEsa();
+
+	L_psi_ = CMAT::CartError( l_wTg,l_wTt  );
+	R_psi_ = CMAT::CartError( r_wTg,r_wTt);
+
+
+	 if ((L_psi_.GetFirstVect3().Norm(2) < angErrThresh_hri)
+					&& (L_psi_.GetSecondVect3().Norm(2) < linErrThresh_hri))
+			{
+				flag = 1;
+			}
+*/
+/*!
+ * Acknowledge manager
+ */
+		//! left arm hold mode command manager
+		if (counter1>ack_counter[0] && HoldModeFlag[0]==false ){
+			sysTime[0]=time(0);
+			sysTimeMS[0]=sysTime[0]*1000;//! msec
+
+			//! time difference
+			if((sysTimeMS[0]-sysTimeMSGripper[0])>100){
+				HoldModeFlag[0]=true;
+				obj_hri_control.publish_hri_control_ack(0);
+			}
+		}
+
+		//! right arm hold mode command manager
+		if (counter1>ack_counter[1] && HoldModeFlag[1]==false ){
+			sysTime[1]=time(0);
+			sysTimeMS[1]=sysTime[1]*1000;//! msec
+
+			//! time difference to change hold mode
+			if((sysTimeMS[1]-sysTimeMSGripper[1])>100){
+				HoldModeFlag[1]=true;
+				obj_hri_control.publish_hri_control_ack(1);
+			}
+		}
+
+		//! left stop arm command manager
+		if (counter1>ack_counter[0] && stopArmFlag[0]==false ){
+			sysTime[0]=time(0);
+			sysTimeMS[0]=sysTime[0]*1000;//! msec
+
+			//! time difference
+			if((sysTimeMS[0]-sysTimeMSGripper[0])>100){
+				stopArmFlag[0]=true;
+				obj_hri_control.publish_hri_control_ack(0);
+			}
+		}
+
+		//! right stop arm command manager
+		if (counter1>ack_counter[1] && stopArmFlag[1]==false ){
+			sysTime[1]=time(0);
+			sysTimeMS[1]=sysTime[1]*1000;//! msec
+
+			//! time difference to change hold mode
+			if((sysTimeMS[1]-sysTimeMSGripper[1])>100){
+				stopArmFlag[1]=true;
+				obj_hri_control.publish_hri_control_ack(1);
+			}
+		}
+
+		//! left gripper command manager
+		else if (counter1>ack_counter[0] && GripperFlag[0]==false){
+			sysTime[0]=time(0);
+			sysTimeMS[0]=sysTime[0]*1000;// msec
+
+			//! time to close or open gripper
+			if((sysTimeMS[0]-sysTimeMSGripper[0])>800){
+				GripperFlag[0]=true;
+				obj_hri_control.publish_hri_control_ack(0);
+			}
+		}
+
+		//! left gripper command manager
+		else if(counter1>ack_counter[1] && GripperFlag[1]==false){
+			sysTime[1]=time(0);
+			sysTimeMS[1]=sysTime[1]*1000;//! msec
+
+			// time to close or open gripper
+			if((sysTimeMS[1]-sysTimeMSGripper[1])>800){
+				GripperFlag[1]=true;
+				obj_hri_control.publish_hri_control_ack(1);
+			}
+		}
+
+		else
+		{
+//			cout<<1<<endl;
+
+			if( counter1>ack_counter[0] && obj_hri_control.hri_control_ack_flag[0]==false)
+			{
+				cout<<11111111<<arm<<endl;
+				arm=0;
+				cout<<22222222<<arm<<endl;
+				error_check= obj_hri_control.goal_error_hri_control(cmdRecvd, arm);
+
+				if (error_check==true)
+					obj_hri_control.publish_hri_control_ack(arm);
+//				loop_rate.sleep();
+			}
+
+			if( counter1>ack_counter[1] && obj_hri_control.hri_control_ack_flag[1]==false)
+			{
+				cout<<33333333<<arm<<endl;
+				arm=1;
+				cout<<44444444<<arm<<endl;
+				error_check= obj_hri_control.goal_error_hri_control(cmdRecvd, arm);
+				if (error_check==true)
+					obj_hri_control.publish_hri_control_ack(arm);
+//				loop_rate.sleep();
+			}
+			if( counter1>ack_counter[2] && obj_hri_control.hri_control_ack_flag[2]==false)
+			{
+				arm=2;
+				error_check= bar.Reached();
+				if (error_check==true)
+					obj_hri_control.publish_hri_control_ack(arm);
+//				loop_rate.sleep();
+			}
+		}
+//		cout<<counter1<<": "<<4<<endl;
+
+		obj_hri_control.publish_robotArm_wTt();
+		ros::spinOnce();
+		task->WaitPeriod();
+	}
+	xcom->Release();
+	task->Exit();
+	ros::shutdown();
+	return 0;
+}
+

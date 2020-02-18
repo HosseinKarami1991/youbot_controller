@@ -1,0 +1,10 @@
+#input
+sim_singleYoubot simYoubot							# initial and goal condition of the youbot to simulate
+---
+# Output
+bool simResponse							# Vector of Path points
+float64 time
+float64[5] jointsfinalArmYBRed
+float64[5] jointsfinalArmYBGreen
+float64[3] vehicleRedfinal
+float64[3] vehicleGreenfinal
